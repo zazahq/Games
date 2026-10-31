@@ -1,4 +1,4 @@
--- ZEX HUB - Final Fixed Aimbot (proper lock + no jump on release)
+
 
 local repo = "https://raw.githubusercontent.com/SETHHHX/Zex-Ui-Lib/main/"
 
@@ -13,10 +13,10 @@ Library.ForceCheckbox = false
 Library.ShowToggleFrameInKeybinds = true
 
 local Window = Library:CreateWindow({
-    Title = "ZEX HUB",
-    Subtitle = "Weapon Client",
+    Title = "Lunar",
+    Subtitle = "Urban Reload!",
     Footer = "ZEX HUB",
-    Icon = 114753090358684,
+    Icon = 99631978572502,
     NotifySide = "Right",
     ShowCustomCursor = false,
     DisableSearch = true,
@@ -25,7 +25,7 @@ local Window = Library:CreateWindow({
     AutoShow = true,
     Closable = true,
     Minimizable = true,
-    MobileToggleIcon = 114753090358684,
+    MobileToggleIcon = 99631978572502,
     MobileToggleSize = 54,
     ShowMobileButtons = true,
     Snow = true,
