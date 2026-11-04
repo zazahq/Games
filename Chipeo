@@ -1,0 +1,685 @@
+-- example script by https://github.com/mstudio45/LinoriaLib/blob/main/Example.lua and modified by deivid
+-- You can suggest changes with a pull request or something
+
+local repo = "https://raw.githubusercontent.com/SETHHHX/Zex-Ui-Lib/main/"
+
+local Library = loadstring(game:HttpGet(repo .. "Library.lua"))()
+local ThemeManager = loadstring(game:HttpGet(repo .. "addons/ThemeManager.lua"))()
+local SaveManager = loadstring(game:HttpGet(repo .. "addons/SaveManager.lua"))()
+
+local Options = Library.Options
+local Toggles = Library.Toggles
+
+Library.ForceCheckbox = false -- Forces AddToggle to AddCheckbox
+Library.ShowToggleFrameInKeybinds = true -- Make toggle keybinds work inside the keybinds UI (aka adds a toggle to the UI). Good for mobile users (Default value = true)
+
+local Window = Library:CreateWindow({
+    Title = "L U N A R",
+    Subtitle = "Chipeo 2.0",
+    Footer = "LUNAR",
+    Icon = 99631978572502,
+    NotifySide = "Right",
+    ShowCustomCursor = false,
+    DisableSearch = true,
+    DisableNotificationBell = true,
+    Center = true,
+    AutoShow = true,
+    Closable = true,
+    Minimizable = true,
+
+    --// Floating toggle icon (PC + mobile). Drag to move, click/tap to open-close.
+    --// Asset id, "rbxassetid://...", or lucide name. Defaults to Window.Icon, then "menu".
+    MobileToggleIcon = 99631978572502,
+    MobileToggleSize = 54,
+    ShowMobileButtons = true, -- set false to hide the floating icon
+    Snow = true,              -- falling snowflakes in the window background
+    SnowCount = 28,
+})
+
+-- CALLBACK NOTE:
+-- Passing in callback functions via the initial element parameters (i.e. Callback = function(Value)...) works
+-- HOWEVER, using Toggles/Options.INDEX:OnChanged(function(Value) ... ) is the RECOMMENDED way to do this.
+-- I strongly recommend decoupling UI code from logic code. i.e. Create your UI elements FIRST, and THEN setup :OnChanged functions later.
+
+-- You do not have to set your tabs & groups up this way, just a prefrence.
+-- You can find more icons in https://lucide.dev/
+local Tabs = {
+	-- Creates a new tab titled Main
+	Main = Window:AddTab("Main", "user"),
+	["UI Settings"] = Window:AddTab("UI Settings", "settings"),
+}
+
+
+--[[
+Example of how to add a warning box to a tab; the title AND text support rich text formatting.
+
+local UISettingsTab = Tabs["UI Settings"]
+
+UISettingsTab:UpdateWarningBox({
+	Visible = true,
+	Title = "Warning",
+	Text = "This is a warning box!",
+})
+
+--]]
+
+-- Groupbox and Tabbox inherit the same functions
+-- except Tabboxes you have to call the functions on a tab (Tabbox:AddTab(Name))
+local LeftGroupBox = Tabs.Main:AddGroupbox({
+	Side = "Left", --// (Case-insensitive),
+	Name = "Main",
+	Description = "Auto Farm",
+	IconName = "boxes",
+	-- Collapsed = false,
+	-- DisableCollapsing = false,
+})
+
+local RightGroupBox = Tabs.Main:AddGroupbox({
+	Side = "Right", --// (Case-insensitive),
+	Name = "Misc",
+	Description = "Misc Section",
+	IconName = "boxes",
+	-- Collapsed = false,
+	-- DisableCollapsing = false,
+})
+
+-- Groupbox:AddToggle
+-- Arguments: Index, Options
+-- Mecanico Auto-Farm v3.3 + Toggle
+
+-- == ANTI-AFK ==
+local Players = game:GetService("Players")
+local VirtualUser = game:GetService("VirtualUser")
+local LocalPlayer = Players.LocalPlayer
+
+-- Configuración: cada cuántos segundos enviar la señal (por defecto 60s)
+local WAIT_TIME = 60 
+
+LocalPlayer.Idled:Connect(function()
+    -- Cuando el juego detecta que estás AFK, reseteamos el contador
+    VirtualUser:CaptureController()
+    VirtualUser:ClickButton2(Vector2.new(0, 0))
+    print("[Anti-AFK] Movimiento detectado. Evitando kick.")
+end)
+
+print("[Anti-AFK] Activado. No te van a expulsar.")
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local LocalPlayer = Players.LocalPlayer
+
+local TRABAJO = workspace:WaitForChild("TRABAJO_MECANICO")
+local PUESTOS = TRABAJO:WaitForChild("Puestos")
+local VEHICLES = workspace:WaitForChild("Vehicles")
+local MecanicoRemote = ReplicatedStorage:WaitForChild("MecanicoRemote")
+
+local FICHAJE_POS = Vector3.new(-36, 5, 946)
+local REMOVE_WAIT = 7
+local INSTALL_WAIT = 8
+local BLACKLIST_TIME = 45
+
+----------------------------------------------------------------
+-- estado del farm
+----------------------------------------------------------------
+local running = false
+local farmThread = nil
+
+local blacklist = {}
+local currentBass = nil
+local holdingBass = false
+
+local attachConn = nil
+local attachedPart = nil
+local attachOffset = Vector3.new(0, 2.6, 0)
+
+----------------------------------------------------------------
+-- helpers
+----------------------------------------------------------------
+local function isBlacklisted(part)
+	local t = blacklist[part]
+	if not t then return false end
+	if os.clock() > t then
+		blacklist[part] = nil
+		return false
+	end
+	return true
+end
+
+local function addToBlacklist(part)
+	if part then
+		blacklist[part] = os.clock() + BLACKLIST_TIME
+		print("[Mecanico] blacklist 45s →", part.Name)
+	end
+end
+
+MecanicoRemote.OnClientEvent:Connect(function(action, data)
+	if action == "Aviso" and data and data.texto then
+		local txt = tostring(data.texto):lower()
+		if txt:find("otro mecánico") or txt:find("otro mecanico") or txt:find("ya está con ese") then
+			addToBlacklist(currentBass)
+		end
+	end
+end)
+
+local attachTo, detach
+
+detach = function()
+	if attachConn then
+		attachConn:Disconnect()
+		attachConn = nil
+	end
+	attachedPart = nil
+end
+
+attachTo = function(part, offset)
+	detach()
+	if not part then return end
+	attachedPart = part
+	attachOffset = offset or Vector3.new(0, 2.6, 0)
+	attachConn = RunService.Heartbeat:Connect(function()
+		local hrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+		if not hrp or not attachedPart or not attachedPart.Parent then
+			detach()
+			return
+		end
+		local target = attachedPart.CFrame * CFrame.new(attachOffset)
+		hrp.AssemblyLinearVelocity = Vector3.zero
+		hrp.AssemblyAngularVelocity = Vector3.zero
+		hrp.CFrame = target
+	end)
+end
+
+local function getHRP()
+	local c = LocalPlayer.Character
+	return c and c:FindFirstChild("HumanoidRootPart")
+end
+
+local function firePrompt(prompt)
+	if not prompt or not prompt:IsA("ProximityPrompt") then return false end
+	if not prompt.Enabled then return false end
+	pcall(function() fireproximityprompt(prompt) end)
+	return true
+end
+
+local function isOnDuty()
+	return LocalPlayer:GetAttribute("EsMecanico") == true
+end
+
+local function doFichaje()
+	if isOnDuty() then return true end
+	local hrp = getHRP()
+	if not hrp then return false end
+	detach()
+	hrp.CFrame = CFrame.new(FICHAJE_POS)
+	task.wait(0.7)
+	local prompt = nil
+	for _, child in ipairs(PUESTOS:GetChildren()) do
+		if child.Name:lower():find("fichaje") then
+			local p = child:FindFirstChild("PromptFichaje") or child:FindFirstChildWhichIsA("ProximityPrompt")
+			if p and p:IsA("ProximityPrompt") then
+				prompt = p
+				break
+			end
+		end
+	end
+	if prompt then
+		firePrompt(prompt)
+		task.wait(1.4)
+	end
+	return isOnDuty()
+end
+
+local function findDamagedBass()
+	for _, veh in ipairs(VEHICLES:GetChildren()) do
+		if veh.Name:match("^Taller") then
+			for _, part in ipairs(veh:GetDescendants()) do
+				if part:IsA("BasePart") and part.Name:match("^PuestoBajo_Bass") then
+					if isBlacklisted(part) then continue end
+					local prompt = part:FindFirstChildWhichIsA("ProximityPrompt")
+					if prompt and prompt.Enabled then
+						return part, prompt, veh
+					end
+				end
+			end
+		end
+	end
+	return nil, nil, nil
+end
+
+local function getMesaPrompt()
+	for _, child in ipairs(PUESTOS:GetChildren()) do
+		if child.Name == "Mesa" then
+			local p = child:FindFirstChild("Prompt") or child:FindFirstChildWhichIsA("ProximityPrompt")
+			if p and p:IsA("ProximityPrompt") and p.Enabled then
+				return p, child
+			end
+		end
+	end
+	return nil, nil
+end
+
+local function getRackPrompt()
+	local rack = PUESTOS:FindFirstChild("Rack")
+	if rack then
+		local p = rack:FindFirstChild("Prompt") or rack:FindFirstChildWhichIsA("ProximityPrompt")
+		if p and p:IsA("ProximityPrompt") then
+			return p, rack
+		end
+	end
+	return nil, nil
+end
+
+local function repairOne()
+	local bassPart = currentBass
+	local removePrompt = nil
+
+	if not holdingBass then
+		bassPart, removePrompt = findDamagedBass()
+		if not bassPart then
+			return false, "sin bajos libres"
+		end
+		currentBass = bassPart
+	else
+		print("[Mecanico] continuando ciclo con bajo en mano →", bassPart and bassPart.Name)
+	end
+
+	print("[Mecanico] Bajo →", bassPart:GetFullName())
+
+	if not holdingBass then
+		attachTo(bassPart, Vector3.new(0, 2.6, 0))
+		task.wait(0.35)
+		if removePrompt then
+			firePrompt(removePrompt)
+		else
+			local p = bassPart:FindFirstChildWhichIsA("ProximityPrompt")
+			if p then firePrompt(p) end
+		end
+		print("[Mecanico] quitando bajo dañado... (7s)")
+		task.wait(REMOVE_WAIT)
+
+		if isBlacklisted(bassPart) then
+			print("[Mecanico] otro mecánico se lo quedó")
+			detach()
+			currentBass = nil
+			holdingBass = false
+			return false, "ocupado"
+		end
+
+		holdingBass = true
+		print("[Mecanico] bajo quitado (en mano)")
+	end
+
+	detach()
+	local mesaPrompt, mesa = getMesaPrompt()
+	if mesaPrompt then
+		local mesaPart = mesa:IsA("BasePart") and mesa or mesa:FindFirstChildWhichIsA("BasePart")
+		if mesaPart then
+			attachTo(mesaPart, Vector3.new(0, 3.2, 0))
+			task.wait(0.3)
+		end
+		firePrompt(mesaPrompt)
+		print("[Mecanico] puesto en mesa")
+		task.wait(1.5)
+		detach()
+	else
+		warn("[Mecanico] no se encontró Prompt de Mesa")
+	end
+
+	local rackPrompt, rack = getRackPrompt()
+	if rackPrompt then
+		local rackPart = rack:IsA("BasePart") and rack or rack:FindFirstChildWhichIsA("BasePart")
+		if rackPart then
+			attachTo(rackPart, Vector3.new(0, 3.0, 0))
+			task.wait(0.3)
+		end
+		firePrompt(rackPrompt)
+		print("[Mecanico] bajo nuevo agarrado")
+		task.wait(1.3)
+		detach()
+	else
+		warn("[Mecanico] no se encontró Prompt del Rack")
+	end
+
+	local installPrompt = nil
+	for i = 1, 20 do
+		installPrompt = bassPart:FindFirstChildWhichIsA("ProximityPrompt")
+		if installPrompt and installPrompt.Enabled then break end
+		task.wait(0.25)
+	end
+
+	attachTo(bassPart, Vector3.new(0, 2.6, 0))
+	task.wait(0.35)
+	if installPrompt then
+		firePrompt(installPrompt)
+		print("[Mecanico] instalando bajo nuevo... (8s)")
+		task.wait(INSTALL_WAIT)
+		print("[Mecanico] instalación terminada")
+	else
+		warn("[Mecanico] no apareció prompt de instalación")
+	end
+
+	detach()
+	holdingBass = false
+	currentBass = nil
+	task.wait(1.2)
+	return true, "ok"
+end
+
+local function startFarm()
+	if running then return end
+	running = true
+	print("[Mecanico] farm ACTIVADO")
+
+	farmThread = task.spawn(function()
+		while running do
+			if not getHRP() then
+				task.wait(1)
+				continue
+			end
+
+			if not isOnDuty() then
+				print("[Mecanico] fichando...")
+				doFichaje()
+				task.wait(1.5)
+				continue
+			end
+
+			local ok, msg = repairOne()
+			if not ok then
+				print("[Mecanico]", msg)
+				if holdingBass then
+					print("[Mecanico] reintentando ciclo con bajo en mano...")
+					task.wait(1)
+				else
+					task.wait(2.5)
+				end
+			else
+				task.wait(1.2)
+			end
+		end
+		detach()
+	end)
+end
+
+local function stopFarm()
+	running = false
+	detach()
+	holdingBass = false
+	currentBass = nil
+	print("[Mecanico] farm DESACTIVADO")
+end
+
+----------------------------------------------------------------
+-- TOGGLE (Linoria / similar)
+----------------------------------------------------------------
+LeftGroupBox:AddToggle("MecanicoFarm", {
+	Text = "Auto Mecánico (Bajos)",
+	Tooltip = "Repara bajos automáticamente (quitar → mesa → rack → instalar)",
+	Default = false,
+	Callback = function(Value)
+		if Value then
+			startFarm()
+		else
+			stopFarm()
+		end
+	end,
+})
+
+
+
+
+
+-- Teleports
+
+local Players = game:GetService("Players")
+local LocalPlayer = Players.LocalPlayer
+
+local TP_LOCATIONS = {
+	["Taller"]        = Vector3.new(-28, 5, 944),
+	["Dealer"]        = Vector3.new(1797, 5, 1378),
+	["Painting"]      = Vector3.new(1433, 5, 1209),
+	["Gas Station"]   = Vector3.new(1417, 5, 987),
+	["Black Sport"]   = Vector3.new(935, 5, 1309),
+	["The Tavern"]    = Vector3.new(210, 5, 1000),
+}
+
+local selectedTP = "Taller"
+
+local function doTeleport(name)
+	local pos = TP_LOCATIONS[name]
+	if not pos then
+		warn("[TP] ubicación no encontrada:", name)
+		return
+	end
+	local char = LocalPlayer.Character
+	local hrp = char and char:FindFirstChild("HumanoidRootPart")
+	if not hrp then
+		warn("[TP] no hay personaje")
+		return
+	end
+	hrp.CFrame = CFrame.new(pos)
+	print("[TP] →", name, pos)
+end
+
+-- Dropdown
+RightGroupBox:AddDropdown("TPDropdown", {
+	Values = { "Taller", "Dealer", "Painting", "Gas Station", "Black Sport", "The Tavern" },
+	Default = 1,
+	Multi = false,
+	Text = "Ubicación",
+	Tooltip = "Elige a dónde teletransportarte",
+	Searchable = false,
+	Callback = function(Value)
+		selectedTP = Value
+		print("[TP] seleccionado:", Value)
+	end,
+})
+
+-- Botón
+RightGroupBox:AddButton({
+	Text = "Teleport",
+	Func = function()
+		doTeleport(selectedTP)
+	end,
+	DoubleClick = false,
+	Tooltip = "Te lleva a la ubicación seleccionada",
+})
+
+
+
+
+
+
+
+
+
+
+
+
+
+-- UI Settings
+local MenuGroup = Tabs["UI Settings"]:AddGroupbox({
+	Side = "Left",
+	Name = "Menu",
+	IconName = "wrench"
+})
+
+MenuGroup:AddToggle("KeybindMenuOpen", {
+	Default = Library.KeybindFrame.Visible,
+	Text = "Open Keybind Menu",
+	Callback = function(value)
+		Library.KeybindFrame.Visible = value
+	end,
+})
+MenuGroup:AddToggle("ShowCustomCursor", {
+	Text = "Custom Cursor",
+	Default = Library.ShowCustomCursor,
+	Callback = function(Value)
+		Library.ShowCustomCursor = Value
+	end,
+})
+MenuGroup:AddToggle("AlwaysOnTop", {
+	Text = "Always On Top",
+	Default = Window.AlwaysOnTop,
+	Callback = function(Value)
+		Window:SetAlwaysOnTop(Value)
+	end,
+})
+MenuGroup:AddToggle("SnowEffect", {
+	Text = "Snow Background",
+	Default = true,
+	Tooltip = "Falling snowflakes behind the UI",
+	Callback = function(Value)
+		if Window.SetSnowEnabled then
+			Window:SetSnowEnabled(Value)
+		end
+	end,
+})
+MenuGroup:AddDropdown("NotificationSide", {
+	Values = { "Left", "Right" },
+	Default = "Right",
+
+	Text = "Notification Side",
+
+	Callback = function(Value)
+		Library:SetNotifySide(Value)
+	end,
+})
+MenuGroup:AddDropdown("DPIDropdown", {
+	Values = { "50%", "75%", "100%", "125%", "150%", "175%", "200%" },
+	Default = "100%",
+
+	Text = "DPI Scale",
+
+	Callback = function(Value)
+		Value = tostring(Value or "100%"):gsub("%%", "")
+		local DPI = tonumber(Value) or 100
+		Library:SetDPIScale(DPI)
+	end,
+})
+
+-- Apply current DPI immediately (Default / SetValue does not always fire Callback)
+do
+	local dpiValue = Options.DPIDropdown and Options.DPIDropdown.Value
+	if typeof(dpiValue) == "table" then
+		for k, v in dpiValue do
+			if v == true then
+				dpiValue = k
+				break
+			elseif typeof(k) == "number" then
+				dpiValue = v
+				break
+			end
+		end
+	end
+	if typeof(dpiValue) == "string" then
+		local cleaned = dpiValue:gsub("%%", "")
+		Library:SetDPIScale(tonumber(cleaned) or 100)
+	elseif typeof(dpiValue) == "number" then
+		Library:SetDPIScale(dpiValue)
+	end
+end
+
+MenuGroup:AddSlider("UICornerSlider", {
+	Text = "Corner Radius",
+	Default = Library.CornerRadius,
+	Min = 0,
+	Max = 20,
+	Rounding = 0,
+	Callback = function(value)
+		Window:SetCornerRadius(value)
+	end
+})
+
+MenuGroup:AddDivider()
+MenuGroup:AddLabel("Menu bind")
+	:AddKeyPicker("MenuKeybind", { Default = "RightShift", NoUI = true, Text = "Menu keybind" })
+
+MenuGroup:AddButton("Unload", function()
+	Library:Unload()
+end)
+
+Library.ToggleKeybind = Options.MenuKeybind -- Allows you to have a custom keybind for the menu
+
+-- Addons:
+-- SaveManager (Allows you to have a configuration system)
+-- ThemeManager (Allows you to have a menu theme system)
+
+-- Hand the library over to our managers
+ThemeManager:SetLibrary(Library)
+SaveManager:SetLibrary(Library)
+
+-- IMPORTANT: do NOT call IgnoreThemeSettings — we WANT themes inside configs.
+-- If something else ignored them, force-allow theme indexes again:
+if SaveManager.Ignore then
+	for _, Key in {
+		"BackgroundColor", "MainColor", "AccentColor", "OutlineColor",
+		"FontColor", "FontFace", "BackgroundImage",
+		"ThemeManager_ThemeList", "ThemeManager_CustomThemeList",
+		"ThemeManager_CustomThemeName", "ThemeManager_ThemeJSON",
+	} do
+		SaveManager.Ignore[Key] = nil
+	end
+end
+
+-- Only ignore the menu keybind (not themes)
+SaveManager:SetIgnoreIndexes({ "MenuKeybind" })
+
+-- use case for doing it this way:
+-- a script hub could have themes in a global folder
+-- and game configs in a separate folder per game
+ThemeManager:SetFolder("MyScriptHub")
+SaveManager:SetFolder("MyScriptHub/specific-game")
+SaveManager:SetSubFolder("specific-place") -- if the game has multiple places inside of it (for example: DOORS)
+-- you can use this to save configs for those places separately
+-- The path in this script would be: MyScriptHub/specific-game/settings/specific-place
+-- [ This is optional ]
+
+-- ============================================================
+-- CONFIGS UI (right side of "UI Settings" tab)
+-- This creates: Config name, Save, Load, Autoload, Share code, etc.
+-- ============================================================
+SaveManager:BuildConfigSection(Tabs["UI Settings"])
+
+-- ============================================================
+-- THEMES UI (left side of "UI Settings" tab, under Menu)
+-- ============================================================
+ThemeManager:ApplyToTab(Tabs["UI Settings"])
+
+-- Load the config marked as autoload (if any)
+SaveManager:LoadAutoloadConfig()
+
+-- Re-apply settings that need an explicit call after config load
+task.defer(function()
+	local dpiValue = Options.DPIDropdown and Options.DPIDropdown.Value
+	if typeof(dpiValue) == "table" then
+		for k, v in dpiValue do
+			if v == true then
+				dpiValue = k
+				break
+			elseif typeof(k) == "number" then
+				dpiValue = v
+				break
+			end
+		end
+	end
+	if typeof(dpiValue) == "string" then
+		local cleaned = dpiValue:gsub("%%", "")
+		Library:SetDPIScale(tonumber(cleaned) or 100)
+	elseif typeof(dpiValue) == "number" then
+		Library:SetDPIScale(dpiValue)
+	end
+
+	-- Force-restart snow after config load
+	if Window.SetSnowEnabled then
+		local snowOn = true
+		if Toggles and Toggles.SnowEffect then
+			snowOn = Toggles.SnowEffect.Value == true
+		end
+		-- toggle off then on to guarantee a fresh particle system
+		Window:SetSnowEnabled(false)
+		task.wait()
+		Window:SetSnowEnabled(snowOn)
+	end
+end)
